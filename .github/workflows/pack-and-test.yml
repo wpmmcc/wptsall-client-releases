@@ -1,5 +1,8 @@
 name: Pack and Test
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
