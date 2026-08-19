@@ -54,15 +54,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download kit
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist/kits
-          gh release download ${{ inputs.kit_tag }} \
-            -p "kit-${{ matrix.platform }}.tar.gz" \
-            -D dist/kits || echo "::warning::Kit not available for ${{ matrix.platform }}"
+          gh release download ${{ inputs.kit_tag }} -p "kit-${{ matrix.platform }}.tar.gz" -D dist/kits || echo "::warning::Kit not available for ${{ matrix.platform }}"
 
       - name: Pack kit to release
+        shell: bash
         if: hashFiles(format('dist/kits/kit-{0}.tar.gz', matrix.platform)) != ''
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
@@ -103,28 +103,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download kit
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist/kits
-          gh release download ${{ inputs.kit_tag }} \
-            -p "kit-webui-${{ matrix.platform }}.tar.gz" \
-            -D dist/kits || echo "::warning::WebUI kit not available for ${{ matrix.platform }}"
+          gh release download ${{ inputs.kit_tag }} -p "kit-webui-${{ matrix.platform }}.tar.gz" -D dist/kits || echo "::warning::WebUI kit not available for ${{ matrix.platform }}"
 
       - name: Repack for release
+        shell: bash
         if: hashFiles(format('dist/kits/kit-webui-{0}.tar.gz', matrix.platform)) != ''
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
         run: |
           mkdir -p dist/release-assets dist/staging
           tar -xzf "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -C dist/staging
-          # Rename to release naming
-          mv dist/staging/wptsall-client-webui dist/staging/wptsall-client-webui-${{ inputs.version }}
-          tar -czf "dist/release-assets/wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz" \
-            -C dist/staging "wptsall-client-webui-${{ inputs.version }}"
-          # SHA256
+          mv dist/staging/wptsall-client-webui "dist/staging/wptsall-client-webui-${{ inputs.version }}"
+          tar -czf "dist/release-assets/wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/staging "wptsall-client-webui-${{ inputs.version }}"
           cd dist/release-assets
-          sha256sum *.tar.gz > SHA256SUMS-${{ matrix.platform }}.txt || shasum -a 256 *.tar.gz > SHA256SUMS-${{ matrix.platform }}.txt
+          sha256sum *.tar.gz > "SHA256SUMS-${{ matrix.platform }}.txt" || shasum -a 256 *.tar.gz > "SHA256SUMS-${{ matrix.platform }}.txt"
 
       - name: Upload artifacts
         if: hashFiles('dist/release-assets/*') != ''
@@ -149,21 +146,21 @@ jobs:
           merge-multiple: true
 
       - name: Merge SHA256SUMS
+        shell: bash
         run: |
           cd assets
           cat SHA256SUMS-*.txt 2>/dev/null > RELEASE-SHA256SUMS.txt || true
           rm -f SHA256SUMS-*.txt
 
       - name: Create release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ inputs.version }}"
           PREFIX="${{ inputs.type }}"
           TITLE="WPTSALL Client ($PREFIX) ${{ inputs.version }}"
-          gh release create "$TAG-$PREFIX" assets/* \
-            --title "$TITLE" \
-            --generate-notes
+          gh release create "$TAG-$PREFIX" assets/* --title "$TITLE" --generate-notes
 
   # ═══════════════════════════════════════════════════════════════════════════
   # INSTALL TEST: Desktop
@@ -185,11 +182,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install from release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WPTSALL_VERSION: ${{ inputs.version }}
         run: bash scripts/install-from-release.sh --platform ${{ matrix.platform }}
       - name: Smoke test
+        shell: bash
         run: bash scripts/smoke-test.sh
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -212,11 +211,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test install.sh
+        shell: bash
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
         run: |
           bash scripts/install.sh --version ${{ inputs.version }} --no-service
-          # Verify binary exists and runs
           test -x "$HOME/.local/opt/wptsall-client/bin/wptsall-client"
           "$HOME/.local/opt/wptsall-client/bin/wptsall-client" --version || true
           echo "PASS: install.sh on ${{ matrix.platform }}"
