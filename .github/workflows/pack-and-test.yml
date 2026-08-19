@@ -171,7 +171,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   install-test-desktop:
     needs: publish
-    if: inputs.type == 'desktop' && inputs.publish
+    if: always() && needs.publish.result == 'success' && inputs.type == 'desktop'
     strategy:
       fail-fast: false
       matrix:
@@ -200,7 +200,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   install-test-webui-sh:
     needs: publish
-    if: inputs.type == 'webui' && inputs.publish
+    if: always() && needs.publish.result == 'success' && inputs.type == 'webui'
     strategy:
       fail-fast: false
       matrix:
@@ -229,7 +229,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   install-test-webui-ps1:
     needs: publish
-    if: inputs.type == 'webui' && inputs.publish
+    if: always() && needs.publish.result == 'success' && inputs.type == 'webui'
     strategy:
       fail-fast: false
       matrix:
