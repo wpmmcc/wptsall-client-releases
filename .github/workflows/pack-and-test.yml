@@ -140,6 +140,8 @@ jobs:
       (needs.pack-desktop.result == 'success' || needs.pack-webui.result == 'success')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: assets
@@ -157,10 +159,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v${{ inputs.version }}"
-          PREFIX="${{ inputs.type }}"
-          TITLE="WPTSALL Client ($PREFIX) ${{ inputs.version }}"
-          gh release create "$TAG-$PREFIX" assets/* --title "$TITLE" --generate-notes
+          TAG="v${{ inputs.version }}-${{ inputs.type }}"
+          TITLE="WPTSALL Client (${{ inputs.type }}) ${{ inputs.version }}"
+          gh release create "$TAG" assets/* --title "$TITLE" --notes "Automated release"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # INSTALL TEST: Desktop
