@@ -1,0 +1,104 @@
+name: Pack and Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 2.1.0)'
+        required: true
+      kit_tag:
+        description: 'Kit prerelease tag (e.g. kits-v2.1.0)'
+        required: true
+      publish:
+        description: 'Publish release assets'
+        type: boolean
+        default: false
+
+jobs:
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            kinds: tree,deb,appimage
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+            kinds: tree,deb,appimage
+          - os: windows-latest
+            platform: windows-x86_64
+            kinds: tree,nsis,portable
+          - os: macos-latest
+            platform: darwin-aarch64
+            kinds: tree,dmg
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist/kits
+          gh release download ${{ inputs.kit_tag }} \
+            -p "kit-${{ matrix.platform }}.tar.gz" \
+            -D dist/kits || echo "Kit not available for ${{ matrix.platform }}, skipping"
+
+      - name: Pack kit to release
+        if: hashFiles(format('dist/kits/kit-{0}.tar.gz', matrix.platform)) != ''
+        env:
+          WPTSALL_VERSION: ${{ inputs.version }}
+          WPTSALL_PACK_KINDS: ${{ matrix.kinds }}
+          KIT: dist/kits/kit-${{ matrix.platform }}.tar.gz
+        run: bash scripts/pack-kit-to-release.sh
+
+      - name: Upload artifacts
+        if: hashFiles('dist/release-assets/*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/release-assets/*
+
+  publish:
+    needs: pack
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          gh release create "$TAG" assets/* \
+            --title "WPTSALL Client ${{ inputs.version }}" \
+            --generate-notes
+
+  install-test:
+    needs: publish
+    if: inputs.publish
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-latest
+            platform: darwin-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WPTSALL_VERSION: ${{ inputs.version }}
+        run: bash scripts/install-from-release.sh --platform ${{ matrix.platform }}
+      - name: Smoke test
+        run: bash scripts/smoke-test.sh
