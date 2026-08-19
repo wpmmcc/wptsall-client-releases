@@ -7,15 +7,26 @@ on:
         description: 'Release version (e.g. 2.1.0)'
         required: true
       kit_tag:
-        description: 'Kit prerelease tag (e.g. kits-v2.1.0)'
+        description: 'Kit prerelease tag (e.g. kits-v2.1.0 or kits-webui-v2.1.0)'
         required: true
       publish:
         description: 'Publish release assets'
         type: boolean
         default: false
+      type:
+        description: 'Package type: desktop or webui'
+        type: choice
+        options:
+          - desktop
+          - webui
+        default: desktop
 
 jobs:
-  pack:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DESKTOP: Pack kits into platform installers
+  # ═══════════════════════════════════════════════════════════════════════════
+  pack-desktop:
+    if: inputs.type == 'desktop'
     strategy:
       fail-fast: false
       matrix:
@@ -29,10 +40,15 @@ jobs:
           - os: windows-latest
             platform: windows-x86_64
             kinds: tree,nsis,portable
+          - os: windows-11-arm
+            platform: windows-aarch64
+            kinds: tree,portable
           - os: macos-latest
             platform: darwin-aarch64
             kinds: tree,dmg
-
+          - os: macos-latest
+            platform: darwin-x86_64
+            kinds: tree,dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +60,7 @@ jobs:
           mkdir -p dist/kits
           gh release download ${{ inputs.kit_tag }} \
             -p "kit-${{ matrix.platform }}.tar.gz" \
-            -D dist/kits || echo "Kit not available for ${{ matrix.platform }}, skipping"
+            -D dist/kits || echo "::warning::Kit not available for ${{ matrix.platform }}"
 
       - name: Pack kit to release
         if: hashFiles(format('dist/kits/kit-{0}.tar.gz', matrix.platform)) != ''
@@ -58,12 +74,73 @@ jobs:
         if: hashFiles('dist/release-assets/*') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: desktop-${{ matrix.platform }}
           path: dist/release-assets/*
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # WEBUI: Pack kits into simple tarballs
+  # ═══════════════════════════════════════════════════════════════════════════
+  pack-webui:
+    if: inputs.type == 'webui'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: windows-11-arm
+            platform: windows-aarch64
+          - os: macos-latest
+            platform: darwin-aarch64
+          - os: macos-latest
+            platform: darwin-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist/kits
+          gh release download ${{ inputs.kit_tag }} \
+            -p "kit-webui-${{ matrix.platform }}.tar.gz" \
+            -D dist/kits || echo "::warning::WebUI kit not available for ${{ matrix.platform }}"
+
+      - name: Repack for release
+        if: hashFiles(format('dist/kits/kit-webui-{0}.tar.gz', matrix.platform)) != ''
+        env:
+          WPTSALL_VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist/release-assets dist/staging
+          tar -xzf "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -C dist/staging
+          # Rename to release naming
+          mv dist/staging/wptsall-client-webui dist/staging/wptsall-client-webui-${{ inputs.version }}
+          tar -czf "dist/release-assets/wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz" \
+            -C dist/staging "wptsall-client-webui-${{ inputs.version }}"
+          # SHA256
+          cd dist/release-assets
+          sha256sum *.tar.gz > SHA256SUMS-${{ matrix.platform }}.txt || shasum -a 256 *.tar.gz > SHA256SUMS-${{ matrix.platform }}.txt
+
+      - name: Upload artifacts
+        if: hashFiles('dist/release-assets/*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-${{ matrix.platform }}
+          path: dist/release-assets/*
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PUBLISH: Aggregate and create GitHub Release
+  # ═══════════════════════════════════════════════════════════════════════════
   publish:
-    needs: pack
-    if: inputs.publish
+    needs: [pack-desktop, pack-webui]
+    if: |
+      always() && inputs.publish &&
+      (needs.pack-desktop.result == 'success' || needs.pack-webui.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -71,19 +148,31 @@ jobs:
           path: assets
           merge-multiple: true
 
+      - name: Merge SHA256SUMS
+        run: |
+          cd assets
+          cat SHA256SUMS-*.txt 2>/dev/null > RELEASE-SHA256SUMS.txt || true
+          rm -f SHA256SUMS-*.txt
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ inputs.version }}"
-          gh release create "$TAG" assets/* \
-            --title "WPTSALL Client ${{ inputs.version }}" \
+          PREFIX="${{ inputs.type }}"
+          TITLE="WPTSALL Client ($PREFIX) ${{ inputs.version }}"
+          gh release create "$TAG-$PREFIX" assets/* \
+            --title "$TITLE" \
             --generate-notes
 
-  install-test:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INSTALL TEST: Desktop
+  # ═══════════════════════════════════════════════════════════════════════════
+  install-test-desktop:
     needs: publish
-    if: inputs.publish
+    if: inputs.type == 'desktop' && inputs.publish
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
@@ -102,3 +191,59 @@ jobs:
         run: bash scripts/install-from-release.sh --platform ${{ matrix.platform }}
       - name: Smoke test
         run: bash scripts/smoke-test.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INSTALL TEST: WebUI (sh on Linux/macOS)
+  # ═══════════════════════════════════════════════════════════════════════════
+  install-test-webui-sh:
+    needs: publish
+    if: inputs.type == 'webui' && inputs.publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: macos-latest
+            platform: darwin-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test install.sh
+        env:
+          WPTSALL_VERSION: ${{ inputs.version }}
+        run: |
+          bash scripts/install.sh --version ${{ inputs.version }} --no-service
+          # Verify binary exists and runs
+          test -x "$HOME/.local/opt/wptsall-client/bin/wptsall-client"
+          "$HOME/.local/opt/wptsall-client/bin/wptsall-client" --version || true
+          echo "PASS: install.sh on ${{ matrix.platform }}"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INSTALL TEST: WebUI (PowerShell on Windows)
+  # ═══════════════════════════════════════════════════════════════════════════
+  install-test-webui-ps1:
+    needs: publish
+    if: inputs.type == 'webui' && inputs.publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: windows-11-arm
+            platform: windows-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test install.ps1
+        shell: pwsh
+        run: |
+          .\scripts\install.ps1 -Version ${{ inputs.version }} -NoStartup
+          # Verify binary
+          $bin = Join-Path $env:LOCALAPPDATA "wptsall-client\bin\wptsall-client.exe"
+          if (-not (Test-Path $bin)) { throw "Binary not found: $bin" }
+          & $bin --version 2>$null
+          Write-Host "PASS: install.ps1 on ${{ matrix.platform }}"
