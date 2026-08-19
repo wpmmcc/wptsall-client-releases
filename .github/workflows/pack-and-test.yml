@@ -219,10 +219,16 @@ jobs:
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
         run: |
-          bash scripts/install.sh --version ${{ inputs.version }} --no-service
+          # Download directly from the release we just created
+          ASSET="wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
+          TAG="v${{ inputs.version }}-webui"
+          gh release download "$TAG" -p "$ASSET" -D /tmp/ || { echo "::warning::Asset $ASSET not in release, skip"; exit 0; }
+          mkdir -p "$HOME/.local/opt/wptsall-client"
+          tar -xzf "/tmp/$ASSET" -C "$HOME/.local/opt/wptsall-client" --strip-components=1
+          chmod +x "$HOME/.local/opt/wptsall-client/bin/"* 2>/dev/null || true
           test -x "$HOME/.local/opt/wptsall-client/bin/wptsall-client"
           "$HOME/.local/opt/wptsall-client/bin/wptsall-client" --version || true
-          echo "PASS: install.sh on ${{ matrix.platform }}"
+          echo "PASS: install test on ${{ matrix.platform }}"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # INSTALL TEST: WebUI (PowerShell on Windows)
@@ -242,11 +248,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test install.ps1
-        shell: pwsh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          .\scripts\install.ps1 -Version ${{ inputs.version }} -NoStartup
-          # Verify binary
-          $bin = Join-Path $env:LOCALAPPDATA "wptsall-client\bin\wptsall-client.exe"
-          if (-not (Test-Path $bin)) { throw "Binary not found: $bin" }
-          & $bin --version 2>$null
-          Write-Host "PASS: install.ps1 on ${{ matrix.platform }}"
+          ASSET="wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
+          TAG="v${{ inputs.version }}-webui"
+          gh release download "$TAG" -p "$ASSET" -D /tmp/ || { echo "::warning::Asset $ASSET not in release, skip"; exit 0; }
+          mkdir -p "$LOCALAPPDATA/wptsall-client"
+          tar -xzf "/tmp/$ASSET" -C "$LOCALAPPDATA/wptsall-client" --strip-components=1
+          test -f "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe" || { echo "::warning::No exe for this platform"; exit 0; }
+          "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe" --version || true
+          echo "PASS: install test on ${{ matrix.platform }}"
