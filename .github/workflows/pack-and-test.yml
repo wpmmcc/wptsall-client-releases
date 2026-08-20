@@ -173,15 +173,21 @@ jobs:
           mkdir -p /tmp/kit-http
           cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz /tmp/kit-http/
           cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz.minisig /tmp/kit-http/ || true
-          # SUMS for this one file
           (cd /tmp/kit-http && sha256sum kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt || shasum -a 256 kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt)
-          python3 -m http.server 8765 --directory /tmp/kit-http &
-          sleep 1
+          cd /tmp/kit-http
+          python3 -m http.server 8765 --bind 127.0.0.1 &
+          HTTP_PID=$!
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8765/ >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/ >/dev/null || { echo "local kit HTTP server failed"; kill "$HTTP_PID" 2>/dev/null || true; exit 1; }
           PREFIX="$HOME/.local/opt/wptsall-client-ci"
           rm -rf "$PREFIX"
           WPTSALL_DOWNLOAD_BASE="http://127.0.0.1:8765" \
             bash installers/install-webui.sh --version "${WPTSALL_VERSION}" --prefix "$PREFIX" --no-service --no-link
           bash shared/smoke-test-webui.sh "$PREFIX"
+          kill "$HTTP_PID" 2>/dev/null || true
 
   install-test-webui-ps1:
     needs: pack-webui
@@ -204,9 +210,11 @@ jobs:
       - name: Extract kit and smoke
         shell: bash
         run: |
-          mkdir -p "$LOCALAPPDATA/wptsall-client"
-          tar -xzf "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" -C "$LOCALAPPDATA/wptsall-client" --strip-components=1
-          test -f "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe"
+          INSTALL_DIR="${LOCALAPPDATA}/wptsall-client-ci"
+          rm -rf "$INSTALL_DIR"
+          mkdir -p "$INSTALL_DIR"
+          tar -xzf "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+          test -f "$INSTALL_DIR/bin/wptsall-client.exe"
           echo "PASS: windows kit extract ${{ matrix.platform }}"
 
   publish:
