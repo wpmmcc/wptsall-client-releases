@@ -118,11 +118,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update -y && sudo apt-get install -y minisign
-          else
-            brew install minisign
-          fi
+          bash shared/install-minisign-ci.sh
           PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
           minisign -Vm "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -P "$PUB" \
             -x "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz.minisig"
@@ -169,12 +165,7 @@ jobs:
           name: webui-${{ matrix.platform }}
           path: ci-assets
       - name: Install minisign
-        run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update -y && sudo apt-get install -y minisign python3
-          else
-            brew install minisign || true
-          fi
+        run: bash shared/install-minisign-ci.sh
       - name: Serve signed kit + run install-webui.sh
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
