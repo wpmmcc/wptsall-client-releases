@@ -209,7 +209,7 @@ jobs:
       - name: Extract kit and smoke
         shell: bash
         run: |
-          INSTALL_DIR="$USERPROFILE/AppData/Local/wptsall-client-ci"
+          INSTALL_DIR="$GITHUB_WORKSPACE/wptsall-client-ci-win"
           rm -rf "$INSTALL_DIR"
           mkdir -p "$INSTALL_DIR"
           tar -xzf "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" -C "$INSTALL_DIR" --strip-components=1
