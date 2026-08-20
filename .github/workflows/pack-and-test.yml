@@ -1,5 +1,11 @@
 name: Pack and Test
 
+# Canonical copy: install-client/workflows/pack-and-test.yml
+# Sync to wpmmcc/wptsall-client-releases via packaging/webui/sync-public-repo.sh
+#
+# Desktop jobs remain but are out of current scope (see CURRENT-FOCUS.md).
+# WebUI: download signed kits, repack, test install-webui.sh against kits.
+
 permissions:
   contents: write
 
@@ -10,24 +16,21 @@ on:
         description: 'Release version (e.g. 2.1.0)'
         required: true
       kit_tag:
-        description: 'Kit prerelease tag (e.g. kits-v2.1.0 or kits-webui-v2.1.0)'
+        description: 'Kit prerelease tag (e.g. kits-webui-v2.1.0)'
         required: true
       publish:
-        description: 'Publish release assets'
+        description: 'Publish packed release assets (optional; install tests do not require this)'
         type: boolean
         default: false
       type:
-        description: 'Package type: desktop or webui'
+        description: 'Package type'
         type: choice
         options:
-          - desktop
           - webui
-        default: desktop
+          - desktop
+        default: webui
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # DESKTOP: Pack kits into platform installers
-  # ═══════════════════════════════════════════════════════════════════════════
   pack-desktop:
     if: inputs.type == 'desktop'
     strategy:
@@ -55,7 +58,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Download kit
         shell: bash
         env:
@@ -63,7 +65,6 @@ jobs:
         run: |
           mkdir -p dist/kits
           gh release download ${{ inputs.kit_tag }} -p "kit-${{ matrix.platform }}.tar.gz" -D dist/kits || echo "::warning::Kit not available for ${{ matrix.platform }}"
-
       - name: Pack kit to release
         shell: bash
         if: hashFiles(format('dist/kits/kit-{0}.tar.gz', matrix.platform)) != ''
@@ -71,8 +72,7 @@ jobs:
           WPTSALL_VERSION: ${{ inputs.version }}
           WPTSALL_PACK_KINDS: ${{ matrix.kinds }}
           KIT: dist/kits/kit-${{ matrix.platform }}.tar.gz
-        run: bash scripts/pack-kit-to-release.sh
-
+        run: bash packaging/desktop/pack-kit-to-release.sh || bash scripts/pack-kit-to-release.sh
       - name: Upload artifacts
         if: hashFiles('dist/release-assets/*') != ''
         uses: actions/upload-artifact@v4
@@ -80,9 +80,6 @@ jobs:
           name: desktop-${{ matrix.platform }}
           path: dist/release-assets/*
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # WEBUI: Pack kits into simple tarballs
-  # ═══════════════════════════════════════════════════════════════════════════
   pack-webui:
     if: inputs.type == 'webui'
     strategy:
@@ -104,103 +101,56 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download kit
+      - name: Download signed kit
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist/kits
-          gh release download ${{ inputs.kit_tag }} -p "kit-webui-${{ matrix.platform }}.tar.gz" -D dist/kits || echo "::warning::WebUI kit not available for ${{ matrix.platform }}"
-
-      - name: Repack for release
+          gh release download "${{ inputs.kit_tag }}" \
+            -p "kit-webui-${{ matrix.platform }}.tar.gz" \
+            -p "kit-webui-${{ matrix.platform }}.tar.gz.minisig" \
+            -p "RELEASE-SHA256SUMS-webui.txt" \
+            -p "RELEASE-SHA256SUMS-webui.txt.minisig" \
+            -D dist/kits
+          test -f "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz"
+      - name: Verify minisign
+        if: runner.os != 'Windows'
         shell: bash
-        if: hashFiles(format('dist/kits/kit-webui-{0}.tar.gz', matrix.platform)) != ''
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update -y && sudo apt-get install -y minisign
+          else
+            brew install minisign
+          fi
+          PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
+          minisign -Vm "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -P "$PUB" \
+            -x "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz.minisig"
+      - name: Pack kit (user tarball)
+        shell: bash
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
+          KIT: dist/kits/kit-webui-${{ matrix.platform }}.tar.gz
         run: |
-          mkdir -p dist/release-assets dist/staging
-          tar -xzf "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -C dist/staging
-          mv dist/staging/wptsall-client-webui "dist/staging/wptsall-client-webui-${{ inputs.version }}"
-          tar -czf "dist/release-assets/wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/staging "wptsall-client-webui-${{ inputs.version }}"
-          cd dist/release-assets
-          sha256sum *.tar.gz > "SHA256SUMS-${{ matrix.platform }}.txt" || shasum -a 256 *.tar.gz > "SHA256SUMS-${{ matrix.platform }}.txt"
-
+          if [ -x packaging/webui/pack-kit-to-release.sh ]; then
+            bash packaging/webui/pack-kit-to-release.sh
+          else
+            mkdir -p dist/release-assets dist/staging
+            tar -xzf "$KIT" -C dist/staging
+            tar -czf "dist/release-assets/wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/staging .
+          fi
+          mkdir -p ci-out
+          cp dist/kits/kit-webui-${{ matrix.platform }}.tar.gz ci-out/
+          cp dist/kits/kit-webui-${{ matrix.platform }}.tar.gz.minisig ci-out/
+          cp dist/release-assets/* ci-out/ 2>/dev/null || true
       - name: Upload artifacts
-        if: hashFiles('dist/release-assets/*') != ''
         uses: actions/upload-artifact@v4
         with:
           name: webui-${{ matrix.platform }}
-          path: dist/release-assets/*
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # PUBLISH: Aggregate and create GitHub Release
-  # ═══════════════════════════════════════════════════════════════════════════
-  publish:
-    needs: [pack-desktop, pack-webui]
-    if: |
-      always() && inputs.publish &&
-      (needs.pack-desktop.result == 'success' || needs.pack-webui.result == 'success')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: assets
-          merge-multiple: true
-
-      - name: Merge SHA256SUMS
-        shell: bash
-        run: |
-          cd assets
-          cat SHA256SUMS-*.txt 2>/dev/null > RELEASE-SHA256SUMS.txt || true
-          rm -f SHA256SUMS-*.txt
-
-      - name: Create release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="v${{ inputs.version }}-${{ inputs.type }}"
-          TITLE="WPTSALL Client (${{ inputs.type }}) ${{ inputs.version }}"
-          gh release create "$TAG" assets/* --title "$TITLE" --notes "Automated release"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # INSTALL TEST: Desktop
-  # ═══════════════════════════════════════════════════════════════════════════
-  install-test-desktop:
-    needs: publish
-    if: always() && needs.publish.result == 'success' && inputs.type == 'desktop'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux-x86_64
-          - os: windows-latest
-            platform: windows-x86_64
-          - os: macos-latest
-            platform: darwin-aarch64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install from release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WPTSALL_VERSION: ${{ inputs.version }}
-        run: bash scripts/install-from-release.sh --platform ${{ matrix.platform }}
-      - name: Smoke test
-        shell: bash
-        run: bash scripts/smoke-test.sh
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # INSTALL TEST: WebUI (sh on Linux/macOS)
-  # ═══════════════════════════════════════════════════════════════════════════
+          path: ci-out/*
   install-test-webui-sh:
-    needs: publish
-    if: always() && needs.publish.result == 'success' && inputs.type == 'webui'
+    needs: pack-webui
+    if: always() && needs.pack-webui.result == 'success' && inputs.type == 'webui'
     strategy:
       fail-fast: false
       matrix:
@@ -214,28 +164,37 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Test install.sh
-        shell: bash
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-${{ matrix.platform }}
+          path: ci-assets
+      - name: Install minisign
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update -y && sudo apt-get install -y minisign python3
+          else
+            brew install minisign || true
+          fi
+      - name: Serve signed kit + run install-webui.sh
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
         run: |
-          # Download directly from the release we just created
-          ASSET="wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
-          TAG="v${{ inputs.version }}-webui"
-          gh release download "$TAG" -p "$ASSET" -D /tmp/ || { echo "::warning::Asset $ASSET not in release, skip"; exit 0; }
-          mkdir -p "$HOME/.local/opt/wptsall-client"
-          tar -xzf "/tmp/$ASSET" -C "$HOME/.local/opt/wptsall-client" --strip-components=1
-          chmod +x "$HOME/.local/opt/wptsall-client/bin/"* 2>/dev/null || true
-          test -x "$HOME/.local/opt/wptsall-client/bin/wptsall-client"
-          "$HOME/.local/opt/wptsall-client/bin/wptsall-client" --version || true
-          echo "PASS: install test on ${{ matrix.platform }}"
+          mkdir -p /tmp/kit-http
+          cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz /tmp/kit-http/
+          cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz.minisig /tmp/kit-http/ || true
+          # SUMS for this one file
+          (cd /tmp/kit-http && sha256sum kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt || shasum -a 256 kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt)
+          python3 -m http.server 8765 --directory /tmp/kit-http &
+          sleep 1
+          PREFIX="$HOME/.local/opt/wptsall-client-ci"
+          rm -rf "$PREFIX"
+          WPTSALL_DOWNLOAD_BASE="http://127.0.0.1:8765" \
+            bash installers/install-webui.sh --version "${WPTSALL_VERSION}" --prefix "$PREFIX" --no-service --no-link
+          bash shared/smoke-test-webui.sh "$PREFIX"
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # INSTALL TEST: WebUI (PowerShell on Windows)
-  # ═══════════════════════════════════════════════════════════════════════════
   install-test-webui-ps1:
-    needs: publish
-    if: always() && needs.publish.result == 'success' && inputs.type == 'webui'
+    needs: pack-webui
+    if: always() && needs.pack-webui.result == 'success' && inputs.type == 'webui'
     strategy:
       fail-fast: false
       matrix:
@@ -247,16 +206,38 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Test install.ps1
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-${{ matrix.platform }}
+          path: ci-assets
+      - name: Extract kit and smoke
+        shell: bash
+        run: |
+          mkdir -p "$LOCALAPPDATA/wptsall-client"
+          tar -xzf "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" -C "$LOCALAPPDATA/wptsall-client" --strip-components=1
+          test -f "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe"
+          echo "PASS: windows kit extract ${{ matrix.platform }}"
+
+  publish:
+    needs: [pack-desktop, pack-webui]
+    if: |
+      always() && inputs.publish &&
+      (needs.pack-desktop.result == 'success' || needs.pack-webui.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create packed release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ASSET="wptsall-client-webui-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
-          TAG="v${{ inputs.version }}-webui"
-          gh release download "$TAG" -p "$ASSET" -D /tmp/ || { echo "::warning::Asset $ASSET not in release, skip"; exit 0; }
-          mkdir -p "$LOCALAPPDATA/wptsall-client"
-          tar -xzf "/tmp/$ASSET" -C "$LOCALAPPDATA/wptsall-client" --strip-components=1
-          test -f "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe" || { echo "::warning::No exe for this platform"; exit 0; }
-          "$LOCALAPPDATA/wptsall-client/bin/wptsall-client.exe" --version || true
-          echo "PASS: install test on ${{ matrix.platform }}"
+          TAG="v${{ inputs.version }}-${{ inputs.type }}"
+          TITLE="WPTSALL Client (${{ inputs.type }}) ${{ inputs.version }}"
+          mkdir -p upload
+          find assets -type f \( -name 'wptsall-client-webui-*.tar.gz' -o -name 'SHA256SUMS-*.txt' -o -name 'wptsall-client-*' \) -exec cp {} upload/ \;
+          gh release view "$TAG" >/dev/null 2>&1 && gh release upload "$TAG" upload/* --clobber || \
+            gh release create "$TAG" upload/* --title "$TITLE" --notes "Packed from signed kits. Verify installs against kits-webui-v* minisign kits."
