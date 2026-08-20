@@ -174,8 +174,7 @@ jobs:
           cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz /tmp/kit-http/
           cp ci-assets/kit-webui-${{ matrix.platform }}.tar.gz.minisig /tmp/kit-http/ || true
           (cd /tmp/kit-http && sha256sum kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt || shasum -a 256 kit-webui-*.tar.gz > RELEASE-SHA256SUMS-webui.txt)
-          cd /tmp/kit-http
-          python3 -m http.server 8765 --bind 127.0.0.1 &
+          (cd /tmp/kit-http && python3 -m http.server 8765 --bind 127.0.0.1) &
           HTTP_PID=$!
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:8765/ >/dev/null 2>&1 && break
@@ -185,8 +184,8 @@ jobs:
           PREFIX="$HOME/.local/opt/wptsall-client-ci"
           rm -rf "$PREFIX"
           WPTSALL_DOWNLOAD_BASE="http://127.0.0.1:8765" \
-            bash installers/install-webui.sh --version "${WPTSALL_VERSION}" --prefix "$PREFIX" --no-service --no-link
-          bash shared/smoke-test-webui.sh "$PREFIX"
+            bash "${GITHUB_WORKSPACE}/installers/install-webui.sh" --version "${WPTSALL_VERSION}" --prefix "$PREFIX" --no-service --no-link
+          bash "${GITHUB_WORKSPACE}/shared/smoke-test-webui.sh" "$PREFIX"
           kill "$HTTP_PID" 2>/dev/null || true
 
   install-test-webui-ps1:
