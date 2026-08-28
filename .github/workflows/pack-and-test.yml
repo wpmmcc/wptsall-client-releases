@@ -238,11 +238,16 @@ jobs:
           WPTSALL_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $Asset = "kit-webui-${{ matrix.platform }}.tar.gz"
           $HttpDir = Join-Path $env:RUNNER_TEMP 'kit-http-webui'
           New-Item -ItemType Directory -Force -Path $HttpDir | Out-Null
-          Copy-Item "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" $HttpDir
-          Copy-Item "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz.minisig" $HttpDir
-          $Kit = Join-Path $HttpDir "kit-webui-${{ matrix.platform }}.tar.gz"
+          $KitArtifact = Get-ChildItem -Path 'ci-assets' -Recurse -File -Filter $Asset | Select-Object -First 1
+          $SigArtifact = Get-ChildItem -Path 'ci-assets' -Recurse -File -Filter "$Asset.minisig" | Select-Object -First 1
+          if (-not $KitArtifact) { throw "artifact missing: $Asset" }
+          if (-not $SigArtifact) { throw "artifact missing: $Asset.minisig" }
+          Copy-Item $KitArtifact.FullName (Join-Path $HttpDir $Asset)
+          Copy-Item $SigArtifact.FullName (Join-Path $HttpDir "$Asset.minisig")
+          $Kit = Join-Path $HttpDir $Asset
           $Hash = (Get-FileHash $Kit -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Path (Join-Path $HttpDir 'RELEASE-SHA256SUMS-webui.txt') -Value "$Hash  kit-webui-${{ matrix.platform }}.tar.gz"
           $Server = Start-Job -ScriptBlock { param($dir) Set-Location $dir; python -m http.server 8765 --bind 127.0.0.1 } -ArgumentList $HttpDir
@@ -289,8 +294,12 @@ jobs:
           $Asset = "kit-desktop-${{ matrix.platform }}.tar.gz"
           $HttpDir = Join-Path $env:RUNNER_TEMP 'kit-http-desktop'
           New-Item -ItemType Directory -Force -Path $HttpDir | Out-Null
-          Copy-Item "ci-assets/$Asset" $HttpDir
-          Copy-Item "ci-assets/$Asset.minisig" $HttpDir
+          $KitArtifact = Get-ChildItem -Path 'ci-assets' -Recurse -File -Filter $Asset | Select-Object -First 1
+          $SigArtifact = Get-ChildItem -Path 'ci-assets' -Recurse -File -Filter "$Asset.minisig" | Select-Object -First 1
+          if (-not $KitArtifact) { throw "artifact missing: $Asset" }
+          if (-not $SigArtifact) { throw "artifact missing: $Asset.minisig" }
+          Copy-Item $KitArtifact.FullName (Join-Path $HttpDir $Asset)
+          Copy-Item $SigArtifact.FullName (Join-Path $HttpDir "$Asset.minisig")
           $Kit = Join-Path $HttpDir $Asset
           $Hash = (Get-FileHash $Kit -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Path (Join-Path $HttpDir 'RELEASE-SHA256SUMS-desktop.txt') -Value "$Hash  $Asset"
@@ -310,8 +319,8 @@ jobs:
 
           $BadDir = Join-Path $env:RUNNER_TEMP 'kit-http-desktop-tampered'
           New-Item -ItemType Directory -Force -Path $BadDir | Out-Null
-          Copy-Item "ci-assets/$Asset" $BadDir
-          Copy-Item "ci-assets/$Asset.minisig" $BadDir
+          Copy-Item $KitArtifact.FullName (Join-Path $BadDir $Asset)
+          Copy-Item $SigArtifact.FullName (Join-Path $BadDir "$Asset.minisig")
           Add-Content -Path (Join-Path $BadDir $Asset) -Value 'tamper'
           $BadServer = Start-Job -ScriptBlock { param($dir) Set-Location $dir; python -m http.server 8766 --bind 127.0.0.1 } -ArgumentList $BadDir
           try {
