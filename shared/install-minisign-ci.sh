@@ -55,7 +55,13 @@ if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
   mkdir -p "$INSTALL_DIR"
   cp -f "$BIN" "$INSTALL_DIR/$INSTALL_NAME"
   export PATH="$INSTALL_DIR:$PATH"
-  [ -n "${GITHUB_PATH:-}" ] && printf '%s\n' "$INSTALL_DIR" >> "$GITHUB_PATH"
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    if command -v cygpath >/dev/null 2>&1; then
+      cygpath -w "$INSTALL_DIR" >> "$GITHUB_PATH"
+    else
+      printf '%s\n' "$INSTALL_DIR" >> "$GITHUB_PATH"
+    fi
+  fi
 elif [ -w /usr/local/bin ]; then
   install -m 0755 "$BIN" "/usr/local/bin/$INSTALL_NAME"
 else

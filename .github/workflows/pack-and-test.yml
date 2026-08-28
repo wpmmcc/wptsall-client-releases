@@ -76,7 +76,7 @@ jobs:
         if: hashFiles(format('dist/kits/kit-desktop-{0}.tar.gz', matrix.platform)) != ''
         shell: bash
         run: |
-          bash shared/install-minisign-ci.sh
+          source shared/install-minisign-ci.sh
           PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
           test -f "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz.minisig"
           minisign -Vm "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz" -P "$PUB" \
@@ -140,7 +140,7 @@ jobs:
       - name: Verify minisign
         shell: bash
         run: |
-          bash shared/install-minisign-ci.sh
+          source shared/install-minisign-ci.sh
           PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
           minisign -Vm "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -P "$PUB" \
             -x "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz.minisig"
