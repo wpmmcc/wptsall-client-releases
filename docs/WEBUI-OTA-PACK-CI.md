@@ -1,6 +1,6 @@
-# WebUI：OTA、交叉编译、GitHub 打包与在线安装
+# WebUI / Desktop：OTA、交叉编译、GitHub 打包与在线安装
 
-当前范围见 [CURRENT-FOCUS.md](../CURRENT-FOCUS.md)。**Desktop / OS 证书暂停。**
+当前范围见 [CURRENT-FOCUS.md](../CURRENT-FOCUS.md)。Desktop 与 WebUI 均走“本机编译签名 kit、公开 runner 只验签/打包/安装测试”的边界；OS 证书（Apple Developer ID / Windows Authenticode）仍不作为当前门禁。
 
 ## 信任边界
 
@@ -91,9 +91,9 @@ bash install-client/cross-compile/host-cross-kits-webui.sh --publish --dispatch
 bash install-client/packaging/webui/publish-kit.sh --version 2.1.0 --dispatch
 ```
 
-`pack-and-test.yml` 默认 `type=webui`：矩阵 6 平台下载 kit、Linux/macOS 验 minisign、再打包；随后用 `install-webui.sh` 对 **本地 HTTP 上的 signed kit** 做安装冒烟（不依赖 `publish`）。Windows 抽查解包 exe。
+`pack-and-test.yml` 默认 `type=webui`：矩阵 6 平台下载 kit、验 minisign、再打包；随后用 `install-webui.sh`/`install-webui.ps1` 对 **本地 HTTP 上的 signed kit** 做安装冒烟（不依赖 `publish`）。
 
-Desktop 矩阵仍在文件里，当前不要 dispatch `type=desktop`。
+Desktop 可 dispatch `type=desktop`：矩阵 6 平台下载/验签/打包；Windows `install-test-desktop-ps1` 会在 `windows-latest` 与 `windows-11-arm` 上运行 signed install，并篡改 kit 验证必须拒绝。当前 green evidence：`wpmmcc/wptsall-client-releases` run `33195890726`。
 
 ## 本机全面测试
 
