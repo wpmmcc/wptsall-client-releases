@@ -123,7 +123,7 @@ try {
             exit 1
         }
         if (-not $sigDownloaded -or -not (Test-Path $TempSig)) {
-            Write-Err "missing .minisig — refusing unsigned install"
+            Write-Err "missing .minisig - refusing unsigned install"
             exit 1
         }
         Write-Step "Verifying minisign..."
@@ -186,8 +186,8 @@ try {
         $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
         if ($currentPath -notlike "*$BinPath*") {
             Write-Step "Adding $BinPath to user PATH..."
-            [Environment]::SetEnvironmentVariable("PATH", "$BinPath;$currentPath", "User")
-            $env:PATH = "$BinPath;$env:PATH"
+            [Environment]::SetEnvironmentVariable("PATH", "$($BinPath);$currentPath", "User")
+            $env:PATH = "$($BinPath);$($env:PATH)"
             Write-Ok "PATH updated (restart shell for effect)."
         }
     }
