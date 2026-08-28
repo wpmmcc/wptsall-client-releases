@@ -39,7 +39,10 @@ case "$OS" in
     curl -fsSL "https://github.com/jedisct1/minisign/releases/download/${VER}/minisign-${VER}-win64.zip" \
       -o "$TMP/minisign.zip"
     unzip -q "$TMP/minisign.zip" -d "$TMP"
-    BIN="$(find "$TMP" -type f \( -name 'minisign.exe' -o -name 'minisign' \) | head -n 1)"
+    BIN="$TMP/minisign-win64/${SUB}/minisign.exe"
+    if [ ! -f "$BIN" ]; then
+      BIN="$(find "$TMP" -type f -path "*/${SUB}/minisign.exe" | head -n 1)"
+    fi
     INSTALL_NAME="minisign.exe"
     ;;
   *)

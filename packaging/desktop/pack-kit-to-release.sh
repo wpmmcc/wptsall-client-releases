@@ -43,7 +43,22 @@ fi
 # Portable ZIP (Windows)
 if kind_has portable; then
   ASSET="$OUT_DIR/wptsall-client-${VER}-${PLAT}-portable.zip"
-  (cd "$STAGE" && zip -qr "$ASSET" wptsall-client)
+  if command -v zip >/dev/null 2>&1; then
+    (cd "$STAGE" && zip -qr "$ASSET" wptsall-client)
+  else
+    PYTHON_ZIP_BIN="$(command -v python3 || command -v python || true)"
+    [ -n "$PYTHON_ZIP_BIN" ] || { echo "ERROR: portable packaging needs zip or python" >&2; exit 1; }
+    "$PYTHON_ZIP_BIN" - "$STAGE" "$ASSET" <<'PY'
+import os, sys, zipfile
+stage, asset = sys.argv[1], sys.argv[2]
+root = os.path.join(stage, 'wptsall-client')
+with zipfile.ZipFile(asset, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+    for current, _, files in os.walk(root):
+        for name in files:
+            path = os.path.join(current, name)
+            zf.write(path, os.path.relpath(path, stage).replace(os.sep, '/'))
+PY
+  fi
   echo "Created: $ASSET"
 fi
 
