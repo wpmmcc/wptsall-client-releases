@@ -44,7 +44,7 @@ signature_url_template: .../kits-webui-v{version}/RELEASE-SHA256SUMS-webui.txt.m
 ## 本机交叉编译
 
 ```bash
-source /home/john/wpmmcc-ats3.0/install-client/security/config.env
+source install-client/security/config.env
 export WPTSALL_RELEASE_SALT="$(date -u +%Y%m%dT%H%M%SZ)-$(openssl rand -hex 8)"
 bash install-client/cross-compile/host-cross-kits-webui.sh
 bash install-client/security/scripts/sign-kits-batch.sh "$WPTSALL_VERSION"

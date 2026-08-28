@@ -104,9 +104,10 @@ SUMS_URL="${BASE}/RELEASE-SHA256SUMS-webui.txt"
 SIG_URL="${URL}.minisig"
 SUMS_SIG_URL="${SUMS_URL}.minisig"
 
-TMPDIR="${TMPDIR:-/tmp}"
-TMP_FILE="$TMPDIR/$ASSET"
-TMP_SUMS="$TMPDIR/wptsall-sha256sums-webui.txt"
+TMP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/wptsall-install.XXXXXX")"
+trap 'rm -rf "$TMP_WORK"' EXIT INT TERM
+TMP_FILE="$TMP_WORK/$ASSET"
+TMP_SUMS="$TMP_WORK/wptsall-sha256sums-webui.txt"
 SIG_FILE="${TMP_FILE}.minisig"
 
 echo "Downloading $ASSET..."
@@ -166,6 +167,13 @@ mkdir -p "$PREFIX"
 tar -xzf "$TMP_FILE" -C "$PREFIX" --strip-components=1
 chmod +x "$PREFIX/bin/"* 2>/dev/null || true
 
+# Prefer kit launcher which sets WPTSALL_INSTALL_ROOT + UI path
+if [ -x "$PREFIX/bin/wptsall-webui-start" ]; then
+  START_BIN="$PREFIX/bin/wptsall-webui-start"
+else
+  START_BIN="$PREFIX/bin/wptsall-client"
+fi
+
 BIN_NAME="wptsall-client"
 [ -f "$PREFIX/bin/wptsall-client.exe" ] && BIN_NAME="wptsall-client.exe"
 if [ ! -f "$PREFIX/bin/$BIN_NAME" ]; then
@@ -188,10 +196,12 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${PREFIX}/bin/wptsall-client
+ExecStart=${START_BIN}
 Restart=on-failure
 RestartSec=5
 Environment=WPTSALL_DATA_DIR=${HOME}/.local/share/wptsall-client
+Environment=WPTSALL_INSTALL_ROOT=${PREFIX}
+Environment=WPTSALL_WEB_UI_PATH=${PREFIX}/ui/webui/index.html
 
 [Install]
 WantedBy=default.target
@@ -210,7 +220,13 @@ if [ "$OS" = "darwin" ] && [ "$CREATE_SERVICE" = "1" ]; then
 <dict>
   <key>Label</key><string>cc.wpmm.wptsall-client</string>
   <key>ProgramArguments</key>
-  <array><string>${PREFIX}/bin/wptsall-client</string></array>
+  <array><string>${START_BIN}</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WPTSALL_INSTALL_ROOT</key><string>${PREFIX}</string>
+    <key>WPTSALL_WEB_UI_PATH</key><string>${PREFIX}/ui/webui/index.html</string>
+    <key>WPTSALL_DATA_DIR</key><string>${HOME}/.local/share/wptsall-client</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${HOME}/.local/share/wptsall-client/stdout.log</string>

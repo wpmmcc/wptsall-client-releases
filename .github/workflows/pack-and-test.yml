@@ -3,8 +3,10 @@ name: Pack and Test
 # Canonical copy: install-client/workflows/pack-and-test.yml
 # Sync to wpmmcc/wptsall-client-releases via packaging/webui/sync-public-repo.sh
 #
-# Desktop jobs remain but are out of current scope (see CURRENT-FOCUS.md).
-# WebUI: download signed kits, repack, test install-webui.sh against kits.
+# Dual clients (see DUAL-CLIENTS.md / CURRENT-FOCUS.md):
+#   type=webui   → download kit-webui-*, pack user tarball, install/OTA smoke
+#   type=desktop → download kit-desktop-*, pack deb/AppImage/dmg/nsis (+ tree)
+# Runners never cargo-build production binaries or hold the minisign private key.
 
 permissions:
   contents: write
@@ -64,21 +66,42 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist/kits
-          gh release download ${{ inputs.kit_tag }} -p "kit-${{ matrix.platform }}.tar.gz" -D dist/kits || echo "::warning::Kit not available for ${{ matrix.platform }}"
+          gh release download "${{ inputs.kit_tag }}" \
+            -p "kit-desktop-${{ matrix.platform }}.tar.gz" \
+            -p "kit-desktop-${{ matrix.platform }}.tar.gz.minisig" \
+            -D dist/kits
+          test -f "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz"
+          test -f "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz.minisig"
+      - name: Verify minisign
+        if: hashFiles(format('dist/kits/kit-desktop-{0}.tar.gz', matrix.platform)) != ''
+        shell: bash
+        run: |
+          bash shared/install-minisign-ci.sh
+          PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
+          test -f "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz.minisig"
+          minisign -Vm "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz" -P "$PUB" \
+            -x "dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz.minisig"
+          echo "signature_verified=true platform=${{ matrix.platform }}"
       - name: Pack kit to release
         shell: bash
-        if: hashFiles(format('dist/kits/kit-{0}.tar.gz', matrix.platform)) != ''
+        if: hashFiles(format('dist/kits/kit-desktop-{0}.tar.gz', matrix.platform)) != ''
         env:
           WPTSALL_VERSION: ${{ inputs.version }}
           WPTSALL_PACK_KINDS: ${{ matrix.kinds }}
-          KIT: dist/kits/kit-${{ matrix.platform }}.tar.gz
-        run: bash packaging/desktop/pack-kit-to-release.sh || bash scripts/pack-kit-to-release.sh
+          KIT: dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz
+        run: |
+          bash packaging/desktop/pack-kit-to-release.sh || bash scripts/pack-kit-to-release.sh
+          mkdir -p ci-out
+          cp dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz ci-out/
+          cp dist/kits/kit-desktop-${{ matrix.platform }}.tar.gz.minisig ci-out/
       - name: Upload artifacts
-        if: hashFiles('dist/release-assets/*') != ''
+        if: hashFiles('dist/release-assets/*') != '' || hashFiles('ci-out/*') != ''
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
-          path: dist/release-assets/*
+          path: |
+            dist/release-assets/*
+            ci-out/*
 
   pack-webui:
     if: inputs.type == 'webui'
@@ -115,13 +138,13 @@ jobs:
             -D dist/kits
           test -f "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz"
       - name: Verify minisign
-        if: runner.os != 'Windows'
         shell: bash
         run: |
           bash shared/install-minisign-ci.sh
           PUB='RWR7lrdabZEEywfWEfrRJXIyP5h+LHEabOA8JFiNJ3vGLpNtppyabHfP'
           minisign -Vm "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz" -P "$PUB" \
             -x "dist/kits/kit-webui-${{ matrix.platform }}.tar.gz.minisig"
+          echo "signature_verified=true platform=${{ matrix.platform }}"
       - name: Pack kit (user tarball)
         shell: bash
         env:
@@ -206,15 +229,103 @@ jobs:
         with:
           name: webui-${{ matrix.platform }}
           path: ci-assets
-      - name: Extract kit and smoke
+      - name: Install minisign
         shell: bash
+        run: bash shared/install-minisign-ci.sh
+      - name: Serve signed kit + run install-webui.ps1
+        shell: pwsh
+        env:
+          WPTSALL_VERSION: ${{ inputs.version }}
         run: |
-          INSTALL_DIR="wptsall-client-ci-win"
-          rm -rf "$INSTALL_DIR"
-          mkdir -p "$INSTALL_DIR"
-          tar -xzf "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" -C "$INSTALL_DIR" --strip-components=1
-          test -f "$INSTALL_DIR/bin/wptsall-client.exe"
-          echo "PASS: windows kit extract ${{ matrix.platform }}"
+          $ErrorActionPreference = 'Stop'
+          $HttpDir = Join-Path $env:RUNNER_TEMP 'kit-http-webui'
+          New-Item -ItemType Directory -Force -Path $HttpDir | Out-Null
+          Copy-Item "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz" $HttpDir
+          Copy-Item "ci-assets/kit-webui-${{ matrix.platform }}.tar.gz.minisig" $HttpDir
+          $Kit = Join-Path $HttpDir "kit-webui-${{ matrix.platform }}.tar.gz"
+          $Hash = (Get-FileHash $Kit -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path (Join-Path $HttpDir 'RELEASE-SHA256SUMS-webui.txt') -Value "$Hash  kit-webui-${{ matrix.platform }}.tar.gz"
+          $Server = Start-Job -ScriptBlock { param($dir) Set-Location $dir; python -m http.server 8765 --bind 127.0.0.1 } -ArgumentList $HttpDir
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+            }
+            $InstallDir = Join-Path $env:RUNNER_TEMP 'wptsall-client-ci-win'
+            Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+            powershell -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE/installers/install-webui.ps1" -Version $env:WPTSALL_VERSION -InstallPath $InstallDir -DownloadBase 'http://127.0.0.1:8765' -NoPath -NoStartup
+            if (-not (Test-Path (Join-Path $InstallDir 'bin/wptsall-client.exe'))) { throw 'installed wptsall-client.exe missing' }
+          } finally {
+            Stop-Job $Server -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job $Server -Force -ErrorAction SilentlyContinue
+          }
+
+  install-test-desktop-ps1:
+    needs: pack-desktop
+    if: always() && needs.pack-desktop.result == 'success' && inputs.type == 'desktop'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: windows-11-arm
+            platform: windows-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: ci-assets
+      - name: Install minisign
+        shell: bash
+        run: bash shared/install-minisign-ci.sh
+      - name: Serve signed kit + run install-desktop.ps1 + tamper negative
+        shell: pwsh
+        env:
+          WPTSALL_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Asset = "kit-desktop-${{ matrix.platform }}.tar.gz"
+          $HttpDir = Join-Path $env:RUNNER_TEMP 'kit-http-desktop'
+          New-Item -ItemType Directory -Force -Path $HttpDir | Out-Null
+          Copy-Item "ci-assets/$Asset" $HttpDir
+          Copy-Item "ci-assets/$Asset.minisig" $HttpDir
+          $Kit = Join-Path $HttpDir $Asset
+          $Hash = (Get-FileHash $Kit -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path (Join-Path $HttpDir 'RELEASE-SHA256SUMS-desktop.txt') -Value "$Hash  $Asset"
+          $Server = Start-Job -ScriptBlock { param($dir) Set-Location $dir; python -m http.server 8765 --bind 127.0.0.1 } -ArgumentList $HttpDir
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+            }
+            $InstallDir = Join-Path $env:RUNNER_TEMP 'wptsall-desktop-ci-win'
+            Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+            powershell -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE/installers/install-desktop.ps1" -Version $env:WPTSALL_VERSION -Platform '${{ matrix.platform }}' -InstallPath $InstallDir -DownloadBase 'http://127.0.0.1:8765' -NoPath -NoStartup
+            if (-not (Test-Path (Join-Path $InstallDir 'bin/wptsall-client.exe'))) { throw 'installed desktop wptsall-client.exe missing' }
+          } finally {
+            Stop-Job $Server -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job $Server -Force -ErrorAction SilentlyContinue
+          }
+
+          $BadDir = Join-Path $env:RUNNER_TEMP 'kit-http-desktop-tampered'
+          New-Item -ItemType Directory -Force -Path $BadDir | Out-Null
+          Copy-Item "ci-assets/$Asset" $BadDir
+          Copy-Item "ci-assets/$Asset.minisig" $BadDir
+          Add-Content -Path (Join-Path $BadDir $Asset) -Value 'tamper'
+          $BadServer = Start-Job -ScriptBlock { param($dir) Set-Location $dir; python -m http.server 8766 --bind 127.0.0.1 } -ArgumentList $BadDir
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+            }
+            $BadInstallDir = Join-Path $env:RUNNER_TEMP 'wptsall-desktop-ci-bad'
+            $proc = Start-Process -FilePath powershell -Wait -PassThru -ArgumentList @('-ExecutionPolicy','Bypass','-File',"$env:GITHUB_WORKSPACE/installers/install-desktop.ps1",'-Version',$env:WPTSALL_VERSION,'-Platform','${{ matrix.platform }}','-InstallPath',$BadInstallDir,'-DownloadBase','http://127.0.0.1:8766','-NoPath','-NoStartup')
+            if ($proc.ExitCode -eq 0) { throw 'tampered desktop kit unexpectedly installed' }
+            Write-Host "PASS: tampered desktop kit rejected"
+          } finally {
+            Stop-Job $BadServer -ErrorAction SilentlyContinue | Out-Null
+            Remove-Job $BadServer -Force -ErrorAction SilentlyContinue
+          }
 
   publish:
     needs: [pack-desktop, pack-webui]
@@ -237,5 +348,6 @@ jobs:
           TITLE="WPTSALL Client (${{ inputs.type }}) ${{ inputs.version }}"
           mkdir -p upload
           find assets -type f \( -name 'wptsall-client-webui-*.tar.gz' -o -name 'SHA256SUMS-*.txt' -o -name 'wptsall-client-*' \) -exec cp {} upload/ \;
+          bash packaging/assert-no-source-publish.sh upload
           gh release view "$TAG" >/dev/null 2>&1 && gh release upload "$TAG" upload/* --clobber || \
-            gh release create "$TAG" upload/* --title "$TITLE" --notes "Packed from signed kits. Verify installs against kits-webui-v* minisign kits."
+            gh release create "$TAG" upload/* --title "$TITLE" --notes "Packed from signed kits. Verify installs against kits-*-v* minisign kits."

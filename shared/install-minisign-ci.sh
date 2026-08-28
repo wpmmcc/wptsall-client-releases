@@ -21,6 +21,7 @@ case "$ARCH" in
 esac
 
 BIN=""
+INSTALL_NAME="minisign"
 case "$OS" in
   Linux)
     curl -fsSL "https://github.com/jedisct1/minisign/releases/download/${VER}/minisign-${VER}-linux.tar.gz" \
@@ -34,16 +35,30 @@ case "$OS" in
     unzip -q "$TMP/minisign.zip" -d "$TMP"
     BIN="$TMP/minisign"
     ;;
+  MINGW*|MSYS*|CYGWIN*)
+    curl -fsSL "https://github.com/jedisct1/minisign/releases/download/${VER}/minisign-${VER}-win64.zip" \
+      -o "$TMP/minisign.zip"
+    unzip -q "$TMP/minisign.zip" -d "$TMP"
+    BIN="$(find "$TMP" -type f \( -name 'minisign.exe' -o -name 'minisign' \) | head -n 1)"
+    INSTALL_NAME="minisign.exe"
+    ;;
   *)
     echo "unsupported OS for minisign CI install: $OS" >&2
     exit 1
     ;;
 esac
 
-[ -x "$BIN" ] || { echo "minisign binary not found at $BIN" >&2; exit 1; }
-if [ -w /usr/local/bin ]; then
-  install -m 0755 "$BIN" /usr/local/bin/minisign
+[ -n "$BIN" ] && [ -f "$BIN" ] || { echo "minisign binary not found at $BIN" >&2; exit 1; }
+chmod +x "$BIN" 2>/dev/null || true
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+  INSTALL_DIR="${HOME}/.local/bin"
+  mkdir -p "$INSTALL_DIR"
+  cp -f "$BIN" "$INSTALL_DIR/$INSTALL_NAME"
+  export PATH="$INSTALL_DIR:$PATH"
+  [ -n "${GITHUB_PATH:-}" ] && printf '%s\n' "$INSTALL_DIR" >> "$GITHUB_PATH"
+elif [ -w /usr/local/bin ]; then
+  install -m 0755 "$BIN" "/usr/local/bin/$INSTALL_NAME"
 else
-  sudo install -m 0755 "$BIN" /usr/local/bin/minisign
+  sudo install -m 0755 "$BIN" "/usr/local/bin/$INSTALL_NAME"
 fi
 minisign -V 2>/dev/null || true
